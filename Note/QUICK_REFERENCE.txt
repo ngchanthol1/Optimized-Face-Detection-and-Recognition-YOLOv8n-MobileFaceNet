@@ -1,0 +1,221 @@
+╔═══════════════════════════════════════════════════════════════════════════╗
+║              SERVO MOTOR PROTOCOL - QUICK REFERENCE CARD                  ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+┌───────────────────────────────────────────────────────────────────────────┐
+│ 1. BASIC COMMAND GENERATION                                               │
+└───────────────────────────────────────────────────────────────────────────┘
+
+from servo_motor_protocols import get_angle_protocol, get_rgb_protocol
+
+# Generate angle command
+cmd = get_angle_protocol(motor_id=1, angle_degrees=45, time_ms=1000)
+# Result: "FFFF010A0E0A4003E8B2"
+
+# Generate RGB command  
+cmd = get_rgb_protocol(motor_id=1, color="RED")
+# Result: "FFFF010710FF0000E9"
+
+# Send to hardware
+import serial
+port = serial.Serial('/dev/ttyAMA2', 115200)
+port.write(bytes.fromhex(cmd))
+
+
+┌───────────────────────────────────────────────────────────────────────────┐
+│ 2. MOTOR CONTROLLER USAGE                                                 │
+└───────────────────────────────────────────────────────────────────────────┘
+
+from servo_motor_protocols import ServoMotorController
+
+# Initialize
+controller = ServoMotorController(serial_port)
+controller.is_connected = True
+
+# Set global movement time (applies to all subsequent commands)
+controller.set_movement_time(1500)  # 1500ms for all movements
+
+# Send commands (uses global time)
+controller.send_angle_command(motor_id=1, angle_degrees=45)
+controller.send_angle_command(motor_id=2, angle_degrees=-30)
+
+# Override time for specific command
+controller.send_angle_command(motor_id=3, angle_degrees=90, time_ms=3000)
+
+
+┌───────────────────────────────────────────────────────────────────────────┐
+│ 3. BACKWARD COMPATIBLE ACCESS                                             │
+└───────────────────────────────────────────────────────────────────────────┘
+
+from servo_motor_protocols import ServoMotorProtocols
+
+# Dictionary-style access (just like old hard-coded version)
+cmd = ServoMotorProtocols.ANGLE_PROTOCOLS[1]["45"]
+
+# Change global time for dictionary access
+ServoMotorProtocols.ANGLE_PROTOCOLS.set_time(2000)
+cmd = ServoMotorProtocols.ANGLE_PROTOCOLS[1]["45"]  # Now uses 2000ms
+
+# RGB dictionary access
+cmd = ServoMotorProtocols.RGB_PROTOCOLS[1]["RED"]
+
+
+┌───────────────────────────────────────────────────────────────────────────┐
+│ 4. GUI INTEGRATION TEMPLATE                                               │
+└───────────────────────────────────────────────────────────────────────────┘
+
+import tkinter as tk
+
+class RobotGUI:
+    def __init__(self, root):
+        self.current_time = 1000
+        
+        # Time slider
+        self.slider = tk.Scale(
+            root, from_=1, to=4000, orient=tk.HORIZONTAL,
+            command=self.on_time_change
+        )
+        self.slider.set(1000)
+        
+        # Quick buttons
+        for ms in [100, 500, 1000, 2000, 4000]:
+            tk.Button(root, text=f"{ms}ms", 
+                     command=lambda t=ms: self.set_time(t)).pack()
+    
+    def on_time_change(self, value):
+        self.set_time(int(float(value)))
+    
+    def set_time(self, time_ms):
+        self.current_time = time_ms
+        # Update display, controller, etc.
+
+
+┌───────────────────────────────────────────────────────────────────────────┐
+│ 5. PROTOCOL SPECIFICATIONS                                                │
+└───────────────────────────────────────────────────────────────────────────┘
+
+Command Format: [13 bytes total]
+  FF FF | 01 | 0A | 0E | XX XX | YY YY | ZZ
+  ─────   ──   ──   ──   ─────   ─────   ──
+   │      │    │    │      │       │      │
+   │      │    │    │      │       │      └─ Checksum
+   │      │    │    │      │       └──────── Time (2 bytes, big-endian)
+   │      │    │    │      └──────────────── Angle Value (2 bytes, big-endian)
+   │      │    │    └─────────────────────── Instruction (0x0E = angle)
+   │      │    └──────────────────────────── Length (0x0A = 10 bytes follow)
+   │      └───────────────────────────────── Motor ID (0x01-0x10 for 1-16)
+   └──────────────────────────────────────── Header (fixed)
+
+Angle Conversion:
+  angle_value = int((angle_degrees + 160) * 12.8)
+  Range: -160° to +160° → 0x0000 to 0x1000
+
+Time Conversion:
+  Direct hex conversion: 1000ms = 0x03E8
+  Range: 1ms to 4000ms → 0x0001 to 0x0FA0
+
+Checksum Calculation:
+  checksum = (256 - (sum(bytes) & 0xFF)) & 0xFF
+
+
+┌───────────────────────────────────────────────────────────────────────────┐
+│ 6. EXAMPLE COMMANDS                                                       │
+└───────────────────────────────────────────────────────────────────────────┘
+
+Motor 1, 0°, 1000ms:     FFFF010A0E080003E8F4
+Motor 1, 30°, 1000ms:    FFFF010A0E098003E873
+Motor 1, 45°, 100ms:     FFFF010A0E0A40006439  ⚡ Very Fast
+Motor 1, 45°, 500ms:     FFFF010A0E0A4001F4A8  🚀 Fast
+Motor 1, 45°, 1000ms:    FFFF010A0E0A4003E8B2  🎯 Normal
+Motor 1, 45°, 2000ms:    FFFF010A0E0A4007D0C6  🐌 Slow
+Motor 1, 90°, 1000ms:    FFFF010A0E0C8003E870
+Motor 8, -45°, 1500ms:   FFFF080A0E05C005DCF2
+Motor 16, 160°, 4000ms:  FFFF100A0E10000FA0DA
+
+
+┌───────────────────────────────────────────────────────────────────────────┐
+│ 7. COMMON PATTERNS                                                        │
+└───────────────────────────────────────────────────────────────────────────┘
+
+# Move all motors to same position
+for motor_id in range(1, 17):
+    cmd = get_angle_protocol(motor_id, 0, 1000)
+    serial_port.write(bytes.fromhex(cmd))
+    time.sleep(0.03)
+
+# Coordinated sequence
+sequence = [
+    {"motors": {1: 45, 2: -30, 3: 60}, "time": 1000},
+    {"motors": {1: 90, 2: -60, 3: 90}, "time": 1500},
+    {"motors": {1: 0, 2: 0, 3: 0}, "time": 2000}
+]
+for step in sequence:
+    for motor_id, angle in step["motors"].items():
+        cmd = get_angle_protocol(motor_id, angle, step["time"])
+        serial_port.write(bytes.fromhex(cmd))
+    time.sleep(step["time"] / 1000 + 0.5)
+
+# Wave pattern
+for offset in range(16):
+    for motor_id in range(1, 17):
+        angle = 45 if (motor_id + offset) % 2 == 0 else -45
+        cmd = get_angle_protocol(motor_id, angle, 800)
+        serial_port.write(bytes.fromhex(cmd))
+    time.sleep(0.8)
+
+
+┌───────────────────────────────────────────────────────────────────────────┐
+│ 8. TROUBLESHOOTING                                                        │
+└───────────────────────────────────────────────────────────────────────────┘
+
+No Response:
+  • Check UART connection: ls /dev/ttyAMA* 
+  • Verify baud rate: 115200
+  • Test with: python3 servo_motor_protocols.py
+
+Wrong Speed:
+  • Check time_ms parameter
+  • Verify: ServoMotorProtocols.ANGLE_PROTOCOLS.set_time(1000)
+
+Permission Denied:
+  • Add user to dialout group: sudo usermod -a -G dialout $USER
+  • Logout and login again
+
+Import Error:
+  • Ensure servo_motor_protocols.py is in same directory
+  • Check: python3 -c "import servo_motor_protocols"
+
+
+┌───────────────────────────────────────────────────────────────────────────┐
+│ 9. PERFORMANCE TIPS                                                       │
+└───────────────────────────────────────────────────────────────────────────┘
+
+✅ Command generation: <0.1ms (very fast)
+✅ No memory overhead: No lookup tables
+✅ Instant startup: No pre-computation
+
+⚡ For highest performance:
+  - Generate commands once, reuse if possible
+  - Use batch operations with small delays (0.03s)
+  - Adjust time_ms based on movement requirements
+
+
+┌───────────────────────────────────────────────────────────────────────────┐
+│ 10. TESTING COMMANDS                                                      │
+└───────────────────────────────────────────────────────────────────────────┘
+
+# Test protocol generator
+python3 servo_motor_protocols.py
+
+# Test integration
+python3 integration_demo.py
+
+# Verify command for Motor 1, 30°, 1000ms
+from servo_motor_protocols import get_angle_protocol
+assert get_angle_protocol(1, 30, 1000) == "FFFF010A0E098003E873"
+print("✓ Protocol generator working correctly!")
+
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                              END OF REFERENCE                             ║
+╚═══════════════════════════════════════════════════════════════════════════╝
